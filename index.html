@@ -157,8 +157,9 @@ const cv = document.getElementById('simCanvas'), cx = cv.getContext('2d');
 /** FIXED TRACK GENERATION **/
 function generateFixedTrack() {
     const pts = [];
-    for (let x = 0; x < 950; x += 2) {
-        pts.push({ x, y: Math.sin(x * 0.015) * 70 + Math.cos(x * 0.04) * 20 });
+    // simplified smoother track: lower frequency sine wave for easier following
+    for (let x = 0; x < 1000; x += 2) {
+        pts.push({ x, y: Math.sin(x * 0.01) * 60 });
     }
     const minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y));
     const offsetY = (cv.height / 2) - (minY + (maxY - minY) / 2);
@@ -172,10 +173,14 @@ function generateFixedTrack() {
 function mkSlider(parent, label, key, min, max, step, isFloat=true) {
     const d = document.createElement('div');
     d.id = `container-${key}`;
-    d.innerHTML = `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span class="section-label">${label}</span><span class="val-badge" id="v-${key}">${P[key]}</span></div><input type="range" min="${min}" max="${max}" step="${step}" value="${P[key]}">`;
+    // Format label based on key
+    const displayVal = key === 'ki' ? P[key].toFixed(5) : P[key];
+    d.innerHTML = `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span class="section-label">${label}</span><span class="val-badge" id="v-${key}">${displayVal}</span></div><input type="range" min="${min}" max="${max}" step="${step}" value="${P[key]}">`;
     d.querySelector('input').oninput = (e) => {
         const val = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value);
-        P[key] = val; document.getElementById('v-'+key).innerText = val;
+        P[key] = val; 
+        // Force display of small values for Ki
+        document.getElementById('v-'+key).innerText = key === 'ki' ? val.toFixed(5) : val;
         pid.kp = P.kp; pid.ki = P.ki; pid.kd = P.kd;
         robot.wb = P.wb; robot.so = P.so;
         if (!running) draw();
@@ -184,13 +189,18 @@ function mkSlider(parent, label, key, min, max, step, isFloat=true) {
 }
 
 const PS = document.getElementById('pid-sliders'), SS = document.getElementById('speed-sliders'), GS = document.getElementById('geo-sliders');
-// Updated PID ranges based on typical robot requirements
+
+// PID Settings: Ki now starts from 0.00001 and increments by 0.00001
 mkSlider(PS, 'Kp', 'kp', 0, 2.0, 0.001); 
-mkSlider(PS, 'Ki', 'ki', 0, 0.1, 0.0001); 
+mkSlider(PS, 'Ki', 'ki', 0.00001, 0.1, 0.00001); 
 mkSlider(PS, 'Kd', 'kd', 0, 2.0, 0.01);
-mkSlider(SS, 'Start Speed', 'startSpeed', 0, 255, 1, false); mkSlider(SS, 'Target Speed', 'targetSpeed', 0, 255, 1, false);
-mkSlider(GS, 'Wheelbase', 'wb', 10, 30, 1, false); mkSlider(GS, 'Sensor Offset', 'so', 5, 25, 1, false);
-mkSlider(GS, 'Track Width (mm)', 'tw', 10, 40, 1, false); mkSlider(GS, 'Sensor Threshold', 'threshold', 0, 1023, 1, false);
+
+mkSlider(SS, 'Start Speed', 'startSpeed', 0, 255, 1, false); 
+mkSlider(SS, 'Target Speed', 'targetSpeed', 0, 255, 1, false);
+mkSlider(GS, 'Wheelbase', 'wb', 10, 30, 1, false); 
+mkSlider(GS, 'Sensor Offset', 'so', 5, 25, 1, false);
+mkSlider(GS, 'Track Width (mm)', 'tw', 10, 40, 1, false); 
+mkSlider(GS, 'Sensor Threshold', 'threshold', 0, 1023, 1, false);
 
 const chUI = document.getElementById('ch-btns');
 function buildChBtns() {
@@ -218,10 +228,14 @@ function setSensorType(type) {
     P.sensorType = type;
     if (type === 'analog') {
         btnAnalog.classList.add('active'); btnDigital.classList.remove('active');
-        thresholdContainer.style.opacity = '1'; thresholdContainer.style.pointerEvents = 'auto';
+        if (thresholdContainer) {
+            thresholdContainer.style.opacity = '1'; thresholdContainer.style.pointerEvents = 'auto';
+        }
     } else {
         btnAnalog.classList.remove('active'); btnDigital.classList.add('active');
-        thresholdContainer.style.opacity = '0.3'; thresholdContainer.style.pointerEvents = 'none';
+        if (thresholdContainer) {
+            thresholdContainer.style.opacity = '0.3'; thresholdContainer.style.pointerEvents = 'none';
+        }
     }
 }
 btnAnalog.onclick = () => setSensorType('analog');
@@ -237,7 +251,7 @@ function draw(sensorStates = []) {
 
     if (track.length > 1) {
         cx.beginPath(); cx.strokeStyle = '#2d3748'; 
-        cx.lineWidth = P.tw / 2; // Fixed line width using Tw slider
+        cx.lineWidth = P.tw / 2;
         cx.lineCap = 'round'; cx.lineJoin = 'round';
         cx.moveTo(track[0].x, track[0].y); track.forEach(p => cx.lineTo(p.x, p.y)); cx.stroke();
     }
@@ -256,7 +270,7 @@ function draw(sensorStates = []) {
     for (let i = 0; i < P.ns; i++) {
         const off = (i - (P.ns - 1) / 2.0) * P.ss, active = sensorStates[i];
         cx.fillStyle = active ? '#3fb950' : '#ef4444'; cx.beginPath(); cx.arc(P.so, off, 2, 0, Math.PI * 2); cx.fill();
-        sensorContainer.children[i].className = 'sensor-dot ' + (active ? 'on' : 'off');
+        if (sensorContainer.children[i]) sensorContainer.children[i].className = 'sensor-dot ' + (active ? 'on' : 'off');
     }
     cx.restore();
 }
@@ -269,7 +283,6 @@ function loop() {
 
     let err = 0, states = [];
 
-    // Mode A: Playback from CSV
     if (csvMode && step < csvRows.length) {
         const rawRow = csvRows[step];
         states = rawRow.map(val => P.sensorType === 'digital' ? val > 0 : val >= P.threshold);
@@ -281,17 +294,15 @@ function loop() {
             }
         }
         err = cnt > 0 ? tw / cnt : 0;
-    } 
-    // Mode B: Interactive
-    else {
+    } else {
         const center = robot.getSensorCenter();
-        let totalWeightedError = 0, sensorsOnLine = 0;
+        let tw = 0, cnt = 0;
         for (let i = 0; i < P.ns; i++) {
             const offset = (i - (P.ns - 1) / 2.0) * P.ss;
             const sY = center.y + offset * Math.cos(robot.th), sX = center.x - offset * Math.sin(robot.th);
             let clY = track[0].y, minD = Math.abs(sX - track[0].x);
             for (const p of track) { const d = Math.abs(sX - p.x); if (d < minD) { minD = d; clY = p.y; } }
-            const active = Math.abs(sY - clY) <= (P.tw / 20.0);
+            const active = Math.abs(sY - clY) <= (P.tw / 2.0);
             states.push(active);
             if (active) { tw += offset * 100; cnt++; }
         }
@@ -350,8 +361,10 @@ document.getElementById('csv-input').onchange = (e) => {
     reader.readAsText(file);
 };
 
-cv.width = cv.parentElement.offsetWidth;
-generateFixedTrack(); setSensorType('analog');
+window.onload = () => {
+    cv.width = cv.parentElement.offsetWidth;
+    generateFixedTrack(); setSensorType('analog');
+};
 </script>
 </body>
 </html>
